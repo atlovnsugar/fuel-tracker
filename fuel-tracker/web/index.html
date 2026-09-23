@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fuel prices in Europe</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eef1f4;--pn:#fff;--ink:#0f1c2e;--mu:#5b6b7f;--ln:#d8dee6;--a:#0e7c86;--w:#c2410c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 "IBM Plex Sans",system-ui,sans-serif}
+header{background:var(--ink);color:#fff;padding:22px 20px 0}
+.wrap{max-width:1180px;margin:0 auto}
+h1{margin:0;font-size:26px;font-weight:600}
+header p{margin:4px 0 16px;color:#a9b8cb}
+.tabs{display:flex;gap:4px;flex-wrap:wrap}
+.tabs button{background:none;border:0;color:#a9b8cb;padding:10px 16px;font:inherit;cursor:pointer;border-bottom:3px solid transparent}
+.tabs button[aria-pressed=true]{color:#fff;border-color:#3fc1c9}
+button:focus-visible,select:focus-visible,tr:focus-visible{outline:2px solid #3fc1c9;outline-offset:2px}
+main{max-width:1180px;margin:0 auto;padding:20px;display:grid;gap:20px}
+section{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:18px}
+h2{margin:0 0 12px;font-size:17px;font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.kpi{background:var(--pn);border:1px solid var(--ln);border-radius:6px;padding:14px}
+.kpi b{display:block;font-size:26px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--mu);font-size:13px}
+.up{color:var(--w)}.dn{color:var(--a)}
+.two{display:grid;grid-template-columns:1.5fr 1fr;gap:20px}
+@media(max-width:860px){.two{grid-template-columns:1fr}}
+.map{height:440px;background:#f6f8fa;border-radius:4px}
+.map.sm{height:380px}
+.leg{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mu);margin-top:8px}
+.leg i{flex:0 0 160px;height:8px;background:linear-gradient(90deg,#dceeee,#0b3c49)}
+.rank{max-height:480px;overflow:auto}
+table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums}
+td,th{padding:5px 8px;text-align:left;border-bottom:1px solid var(--ln)}
+th{font-weight:500;color:var(--mu);font-size:13px}td:last-child,th:last-child{text-align:right}
+tr[data-c]{cursor:pointer}tr[data-c]:hover,tr.sel{background:#e6f3f4}
+.bar{height:4px;background:var(--a);border-radius:2px;margin-top:3px}
+.ctl{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.ctl button,select{font:inherit;border:1px solid var(--ln);background:#fff;border-radius:4px;padding:4px 10px;cursor:pointer}
+.ctl button[aria-pressed=true]{background:var(--ink);color:#fff;border-color:var(--ink)}
+.chart{position:relative;height:340px}
+.note{color:var(--mu);font-size:13px;margin:8px 0 0}
+#err{display:none;background:#fdecea;border:1px solid #f0b4ad;padding:12px;border-radius:6px}
+footer{color:var(--mu);font-size:13px;padding:0 20px 30px;max-width:1180px;margin:0 auto}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>Fuel prices in Europe</h1>
+  <p id="sub">Weekly consumer prices in the EU-27, with a regional view of Czechia</p>
+  <div class="tabs" id="tabs" role="group" aria-label="Fuel type"></div>
+</div></header>
+<main>
+  <div id="err"></div>
+  <div class="kpis" id="kpis"></div>
+  <div class="two">
+    <section><h2 id="mt">Price by country</h2><div id="map" class="map"></div>
+      <div class="leg"><span id="lo"></span><i></i><span id="hi"></span><span>· click a country</span></div></section>
+    <section><h2>Ranking</h2><div class="rank"><table id="rank"></table></div></section>
+  </div>
+  <section><h2 id="ct">History</h2>
+    <div class="ctl" id="rng"></div><div class="chart"><canvas id="chart"></canvas></div>
+    <p class="note">Prices in force on Mondays, taxes included, converted to euro. EU average is the simple mean of member states, not consumption-weighted.</p></section>
+  <section><h2>Czechia by region</h2>
+    <div class="ctl"><select id="snap" aria-label="Date"></select>
+      <span id="czf" role="group"></span></div>
+    <div class="two"><div id="czmap" class="map sm"></div><table id="cztab"></table></div>
+    <p class="note" id="cznote"></p></section>
+  <section><h2>Household natural gas</h2>
+    <div class="chart"><canvas id="gchart"></canvas></div><p class="note" id="gnote"></p></section>
+</main>
+<footer id="foot"></footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script>
+const $=s=>document.querySelector(s);
+const FUELS={petrol:'Petrol (Euro-super 95)',diesel:'Diesel',heating:'Heating oil',lpg:'LPG'};
+const st={fuel:'petrol',cc:'CZ',range:260,czf:'petrol',snap:0};
+const rn=new Intl.DisplayNames(['en'],{type:'region'});
+const nm=c=>rn.of(c==='EL'?'GR':c);
+const f3=v=>v==null?'–':v.toFixed(3);
+let oil,gas,eu,cz,czr,meta={},map,czmap,euL,czL,chart,gchart;
+const get=async u=>{const r=await fetch(u);if(!r.ok)throw new Error(u+' → '+r.status);return r.json()};
+const ramp=t=>{const a=[220,238,238],b=[11,60,73];return`rgb(${a.map((x,i)=>Math.round(x+(b[i]-x)*t))})`};
+const N=()=>oil.dates.length-1;
+const val=(c,i=N(),f=st.fuel)=>oil.countries[c]?.[f]?.[i]??null;
+const avg=(i,f=st.fuel)=>{const v=Object.keys(oil.countries).map(c=>val(c,i,f)).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b)/v.length:null};
+const pct=(a,b)=>a==null||b==null?null:(a/b-1)*100;
+const chg=p=>p==null?'–':`<span class="${p>0?'up':'dn'}">${p>0?'+':''}${p.toFixed(1)}%</span>`;
+
+function render(){
+  const i=N(),codes=Object.keys(oil.countries).filter(c=>val(c)!=null).sort((a,b)=>val(b)-val(a));
+  const vs=codes.map(c=>val(c)),lo=Math.min(...vs),hi=Math.max(...vs),sc=v=>(v-lo)/(hi-lo||1);
+  $('#tabs').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',b.dataset.f===st.fuel));
+  $('#rng').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.r===st.range));
+  $('#mt').textContent=`${FUELS[st.fuel]}, € per litre, ${oil.dates[i]}`;
+  $('#lo').textContent='€'+f3(lo);$('#hi').textContent='€'+f3(hi);
+  euL.setStyle(f=>{const v=val(f.properties.CNTR_ID);return{fillColor:v==null?'#ddd':ramp(sc(v)),fillOpacity:1,
+    color:f.properties.CNTR_ID===st.cc?'#e11d48':'#fff',weight:f.properties.CNTR_ID===st.cc?2.5:.8}});
+  euL.eachLayer(l=>{const c=l.feature.properties.CNTR_ID;l.bindTooltip(`${nm(c)}: ${val(c)==null?'no data':'€'+f3(val(c))}`,{sticky:true})});
+  $('#rank').innerHTML='<tr><th>Country</th><th>€/l</th></tr>'+codes.map(c=>
+    `<tr data-c="${c}" tabindex="0" class="${c===st.cc?'sel':''}"><td>${nm(c)}<div class="bar" style="width:${sc(val(c))*90+8}%"></div></td><td>${f3(val(c))}</td></tr>`).join('');
+  const p=val(st.cc),a=avg(i),m=Math.max(0,i-4),y=Math.max(0,i-52);
+  $('#kpis').innerHTML=[[nm(st.cc),'€'+f3(p),'latest weekly price'],['Change vs 4 weeks',chg(pct(p,val(st.cc,m))),oil.dates[m]],
+    ['Change vs 1 year',chg(pct(p,val(st.cc,y))),oil.dates[y]],['Vs EU average',chg(pct(p,a)),'EU avg €'+f3(a)]]
+    .map(k=>`<div class="kpi"><span>${k[0]}</span><b>${k[1]}</b><span>${k[2]}</span></div>`).join('');
+  $('#ct').textContent=`History: ${nm(st.cc)}, ${FUELS[st.fuel].toLowerCase()}`;
+  const s=st.range?Math.max(0,oil.dates.length-st.range):0,L=oil.dates.slice(s);
+  const ds=[[nm(st.cc),L.map((_,k)=>val(st.cc,s+k)),'#0e7c86',2.5],['EU average',L.map((_,k)=>avg(s+k)),'#7b8794',1.5]];
+  if(st.cc!=='CZ')ds.push(['Czechia',L.map((_,k)=>val('CZ',s+k)),'#c2410c',1.5]);
+  line(chart,L,ds,'€/l');
+  gasRender();czRender();
+}
+function line(ch,L,ds,unit){ch.data.labels=L;ch.data.datasets=ds.map(d=>({label:d[0],data:d[1],borderColor:d[2],borderWidth:d[3],pointRadius:0,tension:.15,spanGaps:true}));
+  ch.options.scales.y.title.text=unit;ch.update()}
+function mk(id){return new Chart($(id),{type:'line',data:{labels:[],datasets:[]},options:{responsive:true,maintainAspectRatio:false,
+  interaction:{mode:'index',intersect:false},scales:{x:{ticks:{maxTicksLimit:8}},y:{title:{display:true,text:''}}},plugins:{legend:{position:'bottom'}}}})}
+function gasRender(){
+  const g=gas;if(!g.periods.length){$('#gnote').textContent='Gas data could not be loaded during the last build.';return}
+  const av=g.periods.map((_,k)=>{const v=Object.values(g.countries).map(a=>a[k]).filter(x=>x!=null);return v.length?v.reduce((a,b)=>a+b)/v.length:null});
+  const ds=[[nm(st.cc),g.countries[st.cc]||[],'#0e7c86',2.5],['EU average',av,'#7b8794',1.5]];
+  if(st.cc!=='CZ'&&g.countries.CZ)ds.push(['Czechia',g.countries.CZ,'#c2410c',1.5]);
+  line(gchart,g.periods,ds,g.unit);
+  $('#gnote').textContent=`Eurostat nrg_pc_202, half-yearly, consumption band ${g.band}. Latest period: ${g.periods[g.periods.length-1]}.`;
+}
+function czRender(){
+  const S=czr.snapshots[st.snap],vals=S[st.czf],nat=S.national[st.czf],lo=Math.min(...vals),hi=Math.max(...vals),by={};
+  czr.regions.forEach((c,k)=>by[c]=k);
+  $('#czf').innerHTML=['petrol','diesel'].map(f=>`<button data-z="${f}" aria-pressed="${f===st.czf}">${f==='petrol'?'Natural 95':'Diesel'}</button>`).join('');
+  czL.setStyle(f=>({fillColor:ramp((vals[by[f.properties.NUTS_ID]]-lo)/(hi-lo||1)),fillOpacity:1,color:'#fff',weight:1}));
+  czL.eachLayer(l=>{const k=by[l.feature.properties.NUTS_ID];l.bindTooltip(`${czr.names[k]}: ${vals[k].toFixed(2)} Kč/l`,{sticky:true})});
+  $('#cztab').innerHTML='<tr><th>Region</th><th>Kč/l</th><th>vs Czechia</th></tr>'+czr.regions.map((c,k)=>k).sort((a,b)=>vals[b]-vals[a])
+    .map(k=>`<tr><td>${czr.names[k]}</td><td>${vals[k].toFixed(2)}</td><td>${chg(pct(vals[k],nat))}</td></tr>`).join('');
+  $('#cznote').textContent=`Czechia average: ${nat.toFixed(2)} Kč/l. Regional figures come from CCS station-price monitoring; source: ${czr.source}.`;
+}
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-f],[data-c],[data-r],[data-z]');if(!t)return;
+  if(t.dataset.f)st.fuel=t.dataset.f;if(t.dataset.c)st.cc=t.dataset.c;
+  if(t.dataset.r!==undefined)st.range=+t.dataset.r;if(t.dataset.z)st.czf=t.dataset.z;
+  $('#rng').querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',+b.dataset.r===st.range));render()});
+document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.dataset?.c)e.target.click()});
+$('#snap').onchange=e=>{st.snap=+e.target.value;czRender()};
+(async()=>{
+  try{
+    [oil,gas,eu,cz,czr,meta]=await Promise.all(['oil','gas','eu.geojson','cz.geojson','cz_regions','meta'].map(n=>get('data/'+(n.includes('.')?n:n+'.json'))));
+  }catch(e){const x=$('#err');x.style.display='block';x.textContent='Data could not be loaded ('+e.message+'). Check the latest run in the repository’s Actions tab.';return}
+  $('#tabs').innerHTML=Object.entries(FUELS).map(([k,v])=>`<button data-f="${k}">${v}</button>`).join('');
+  $('#rng').innerHTML=[['1 year',52],['5 years',260],['10 years',520],['All',0]].map(r=>`<button data-r="${r[1]}">${r[0]}</button>`).join('');
+  $('#snap').innerHTML=czr.snapshots.map((s,k)=>`<option value="${k}">${s.date}</option>`).join('');
+  st.snap=czr.snapshots.length-1;$('#snap').value=st.snap;
+  map=L.map('map',{scrollWheelZoom:false,attributionControl:false,zoomSnap:.5}).setView([54,14],3.5);
+  euL=L.geoJSON(eu,{onEachFeature:(f,l)=>l.on('click',()=>{st.cc=f.properties.CNTR_ID;render()})}).addTo(map);
+  map.fitBounds([[35,-10],[68,32]]);
+  czmap=L.map('czmap',{scrollWheelZoom:false,attributionControl:false});
+  czL=L.geoJSON(cz).addTo(czmap);czmap.fitBounds(czL.getBounds());
+  chart=mk('#chart');gchart=mk('#gchart');render();
+  $('#sub').textContent=`Weekly consumer prices in the EU-27 · latest bulletin ${oil.dates[N()]}`;
+  $('#foot').innerHTML=`Sources: European Commission Weekly Oil Bulletin (fuels), Eurostat nrg_pc_202 (gas), GISCO (boundaries © EuroGeographics), CCS via ČTK (Czech regions). Data rebuilt ${meta.built||'n/a'} UTC.`;
+})();
+</script>
+</body>
+</html>
